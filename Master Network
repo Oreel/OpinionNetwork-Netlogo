@@ -1,0 +1,260 @@
+urtles-own
+[
+  node-clustering-coefficient
+  distance-from-other-turtles   ;; list of distances of this node from other turtles
+]
+
+globals
+[
+  clustering-coefficient               ;; the clustering coefficient of the network; this is the
+                                       ;; average of clustering coefficients of all turtles
+  average-path-length                  ;; average path length of the network
+  clustering-coefficient-of-lattice    ;; the clustering coefficient of the initial lattice
+  average-path-length-of-lattice       ;; average path length of the initial lattice
+  infinity                             ;; a very large number.
+                                         ;; used to denote distance between two turtles which
+                                         ;; don't have a connected or unconnected path between them
+
+]
+
+
+to setup
+  clear-all
+  set infinity 99999  ;; just an arbitrary choice for a large number
+  ;; creates all the nodes
+    create-turtles  nb-nodes  [
+    set shape "circle"
+    set size 0.5 set color gray
+    setxy random-xcor random-ycor]
+
+  ;; arrange them in a circle in order by who number
+  ;layout-circle (sort turtles) radius
+  ;; create the link between the nodes with the Watts and Strogatz algorithm
+  link-nodes
+  ;; set the simulation time to 0 (plot things)
+  reset-ticks
+   ;; setting the values for the initial lattice
+  let success? false
+  while [not success?] [
+    ;; we need to find initial values for lattice
+    set success? do-calculations
+  ]
+  set clustering-coefficient-of-lattice clustering-coefficient
+  set average-path-length-of-lattice average-path-length
+  end
+;;  go
+
+to clustering
+  find-clustering-coefficient
+end
+
+
+;;to go
+;;  tick
+;;end
+
+
+;; create the links among nodes (Watts and Strogatz algorithm), add weight and color
+
+to link-nodes
+  ;; create a regular lattice
+  ask turtles [
+    let n 1
+    while [ n <= K ]
+    [
+      ifelse who < (count turtles - K) ; what does this line mean?
+      [
+        ifelse (random-float 1) < beta ; small beta resutls in less random links. Less random links means lower average path length
+        [
+          random-link
+        ]
+        [
+          normal-link n
+        ]
+      ]
+      [
+        normal-link n
+      ]
+      set n (n + 1)
+    ]
+  ]
+end
+
+to normal-link [n]
+  create-link-with turtle ((who + n) mod count turtles)
+  [
+    set color blue
+  ]
+end
+
+;; create a link with another 'not-yet linked' node whose id > caller id
+
+to random-link
+  let myid who
+  let other-node one-of other turtles with [(who > myid) and (not link-neighbor? turtle myid)]
+  if other-node != nobody
+  [
+    create-link-with other-node
+    [
+      set color red
+    ]
+  ]
+ end
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; average path length computations    ;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to-report do-calculations
+
+  ;; set up a variable so we can report if the network is disconnected
+  let connected? true
+
+  ;; find the path lengths in the network
+  find-path-lengths
+
+  let num-connected-pairs sum [length remove infinity (remove 0 distance-from-other-turtles)] of turtles
+
+  ;; In a connected network on N nodes, we should have N(N-1) measurements of distances between pairs,
+  ;; and none of those distances should be infinity.
+  ;; If there were any "infinity" length paths between nodes, then the network is disconnected.
+  ;; In that case, calculating the average-path-length doesn't really make sense.
+  ifelse ( num-connected-pairs != (count turtles * (count turtles - 1) ))
+  [
+      set average-path-length infinity
+      ;; report that the network is not connected
+      set connected? false
+  ]
+  [
+    set average-path-length (sum [sum distance-from-other-turtles] of turtles) / (num-connected-pairs)
+  ]
+  ;; find the clustering coefficient and add to the aggregate for all iterations
+  find-clustering-coefficient
+
+  ;; report whether the network is connected or not
+  report connected?
+end
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Clustering computations ;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+to-report in-neighborhood? [ hood ]
+  report ( member? end1 hood and member? end2 hood )
+end
+
+
+to find-clustering-coefficient
+  ifelse all? turtles [count link-neighbors <= 1]
+  [
+    ;; it is undefined
+    ;; what should this be?
+    set clustering-coefficient 0
+  ]
+  [
+    let total 0
+    ask turtles with [ count link-neighbors <= 1]
+      [ set node-clustering-coefficient "undefined" ]
+    ask turtles with [ count link-neighbors > 1]
+    [
+      let hood link-neighbors
+      set node-clustering-coefficient (2 * count links with [ in-neighborhood? hood ] /
+                                         ((count hood) * (count hood - 1)) )
+      ;; find the sum for the value at turtles
+      set total total + node-clustering-coefficient
+    ]
+    ;; take the average
+    set clustering-coefficient total / count turtles with [count link-neighbors > 1]
+  ]
+end
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Path length computations ;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Implements the Floyd Warshall algorithm for All Pairs Shortest Paths
+;; It is a dynamic programming algorithm which builds bigger solutions
+;; from the solutions of smaller subproblems using memoization that
+;; is storing the results.
+;; It keeps finding incrementally if there is shorter path through
+;; the kth node.
+;; Since it iterates over all turtles through k,
+;; so at the end we get the shortest possible path for each i and j.
+
+to find-path-lengths
+  ;; reset the distance list
+  ask turtles
+  [
+    set distance-from-other-turtles []
+  ]
+
+  let i 0
+  let j 0
+  let p 0
+  let node1 one-of turtles
+  let node2 one-of turtles
+  let node-count count turtles
+  ;; initialize the distance lists
+  while [i < node-count]
+  [
+    set j 0
+    while [j < node-count]
+    [
+      set node1 turtle i
+      set node2 turtle j
+      ;; zero from a node to itself
+      ifelse i = j
+      [
+        ask node1 [
+          set distance-from-other-turtles lput 0 distance-from-other-turtles
+        ]
+      ]
+      [
+        ;; 1 from a node to it's neighbor
+        ifelse [ link-neighbor? node1 ] of node2
+        [
+          ask node1 [
+            set distance-from-other-turtles lput 1 distance-from-other-turtles
+          ]
+        ]
+        ;; infinite to everyone else
+        [
+          ask node1 [
+            set distance-from-other-turtles lput infinity distance-from-other-turtles
+          ]
+        ]
+      ]
+      set j j + 1
+    ]
+    set i i + 1
+  ]
+  set i 0
+  set j 0
+  let dummy 0
+  while [p < node-count]
+  [
+    set i 0
+    while [i < node-count]
+    [
+      set j 0
+      while [j < node-count]
+      [
+        ;; alternate path length through kth node
+        set dummy ( (item p [distance-from-other-turtles] of turtle i) +
+                    (item j [distance-from-other-turtles] of turtle p))
+        ;; is the alternate path shorter?
+        if dummy < (item j [distance-from-other-turtles] of turtle i)
+        [
+          ask turtle i [
+            set distance-from-other-turtles replace-item j distance-from-other-turtles dummy
+          ]
+        ]
+        set j j + 1
+      ]
+      set i i + 1
+    ]
+    set p p + 1
+  ]
